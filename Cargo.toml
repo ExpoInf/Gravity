@@ -4,7 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pixels = "0.15.0"
-raqote = "0.8.5"
-winit = { version = "0.30", features = ["rwh_06"] }
+iced = "0.14.0"
 
