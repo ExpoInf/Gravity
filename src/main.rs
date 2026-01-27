@@ -1,5 +1,7 @@
 use iced::widget::{text_editor};
-use iced::Element;
+use iced::{keyboard, Element, Subscription};
+use iced::event::Event::Keyboard;
+use std::fs;
 
 #[derive(Default)]
 struct Project {
@@ -8,7 +10,8 @@ struct Project {
 
 #[derive(Debug, Clone)]
 enum Message {
-    Edit(text_editor::Action)
+    Edit(text_editor::Action),
+    Save(keyboard::Event)
 }
 impl Project {
     fn view(state: &Project) -> Element<'_, Message> {
@@ -23,8 +26,14 @@ impl Project {
         match message {
             Message::Edit(action) => {
                 state.state.perform(action);
+            },
+            Message::Save(keyboard) => {
+
             }
         }
+    }
+    fn subscription(&self) -> iced::Subscription<Message> {
+        keyboard::listen().map(Message::Save)
     }
 }
 
