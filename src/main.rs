@@ -14,6 +14,7 @@ struct Project {
     state: text_editor::Content,
     save_path: String,
     file_tree: Option<FileNode>,
+    browsing_path: String,
 }
 
 struct FileNode {
@@ -84,7 +85,8 @@ impl Default for Project {
         Self {
             state: text_editor::Content::default(),
             save_path: String::from("Gravity_Test.txt"),
-            file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity")
+            file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity"),
+            browsing_path: String::from("/"),
         }
     }
 }
@@ -97,6 +99,7 @@ enum Message {
     Test,
     ToggleFolder(PathBuf),
     OpenFile(PathBuf),
+    BrowsePathChanged(String),
 }
 
 impl Project {
@@ -116,6 +119,10 @@ impl Project {
             text("Save Directory/File:"),
             text_input("path/to/file.txt", &state.save_path)
                 .on_input(Message::PathChanged)
+                .padding(10),
+            text("Save Directory/File:"),
+            text_input("Path to browse:", &state.browsing_path)
+                .on_input(Message::BrowsePathChanged)
                 .padding(10),
             tree_view
         ]
@@ -144,6 +151,10 @@ impl Project {
             Message::PathChanged(new_path) => {
                 state.save_path = new_path;
             },
+            Message::BrowsePathChanged(new_path) => {
+                state.file_tree = build_gui_tree(new_path.as_str());
+                state.browsing_path = new_path;
+            }
             Message::Save => {
                 let file_path = &state.save_path;
 
