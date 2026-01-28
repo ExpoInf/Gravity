@@ -1,0 +1,15 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Gravity
+Comment=A clean and simple rust code editor
+# This command must match the binary name we installed in /usr/bin/
+Exec=gravity
+# Icon name. If you don't have a custom icon yet, 'text-editor' is a safe system default.
+Icon=text-editor
+# Set this to 'true' if your editor runs inside the terminal (like Vim/Helix).
+# Set to 'false' if it has its own window.
+Terminal=false
+Categories=Development;TextEditor;IDE;
+StartupNotify=true
