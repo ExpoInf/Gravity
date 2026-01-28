@@ -1,4 +1,4 @@
-use iced::widget::{column, row, text, text_editor, text_input, button, container, scrollable}; // Added widget imports
+use iced::widget::{column, row, text, text_editor, text_input, button, container, scrollable};
 use iced::{keyboard, Element, Length, Subscription, Task, Padding};
 use iced::event;
 use iced::event::Event;
@@ -6,11 +6,13 @@ use std::fs;
 use walkdir::WalkDir;
 use std::path::PathBuf;
 use std::collections::HashMap;
-
+use std::path::Path;
+use std::fs::File;
+use std::io::Write;
 
 struct Project {
     state: text_editor::Content,
-    save_path: String, // 1. Added field to store the file path
+    save_path: String,
     file_tree: Option<FileNode>,
 }
 
@@ -47,16 +49,15 @@ fn build_gui_tree(root_path: &str) -> Option<FileNode> {
     let mut nodes: HashMap<PathBuf, FileNode> = HashMap::new();
     let root_buf = PathBuf::from(root_path).canonicalize().ok()?;
 
-    // 1. Fill the Map
+
     for entry in WalkDir::new(&root_buf).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path().to_path_buf();
         let is_dir = entry.file_type().is_dir();
         nodes.insert(path.clone(), FileNode::new(path, is_dir));
     }
 
-    // 2. Link children (This must be AFTER the loop above)
     let mut paths: Vec<PathBuf> = nodes.keys().cloned().collect();
-    // Sort by path depth so we move children into parents from the bottom up
+
     paths.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
 
     for path in paths {
@@ -72,18 +73,17 @@ fn build_gui_tree(root_path: &str) -> Option<FileNode> {
         }
     }
 
-    // 3. Final Expression (The return value)
     nodes.remove(&root_buf).map(|mut root| {
         root.sort_children();
         root
-    }) // <--- No semicolon here means this is the return value
+    })
 }
 
 impl Default for Project {
     fn default() -> Self {
         Self {
             state: text_editor::Content::default(),
-            save_path: String::from("Gravity_Test.txt"), // Default startup path
+            save_path: String::from("Gravity_Test.txt"),
             file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity")
         }
     }
@@ -155,11 +155,16 @@ impl Project {
 
                 println!("Saving to: {}", file_path);
 
-
-                match fs::write(file_path, state.state.text()) {
-                    Ok(_) => println!("Successfully saved."),
-                    Err(e) => println!("Failed to save: {}", e),
+                if Path::new(&file_path).exists() {
+                    match fs::write(file_path, state.state.text()) {
+                        Ok(_) => println!("Successfully saved."),
+                        Err(e) => println!("Failed to save: {}", e),
+                    }
+                } else {
+                    let mut file = File::create(&file_path).expect("Failed to create file");
+                    file.write_all(state.state.text().as_ref()).expect("Failed to write file");
                 }
+
             }
             Message::Test => {
                 let _dir_tree = build_gui_tree(state.save_path.as_str()).unwrap();
@@ -174,6 +179,7 @@ impl Project {
                 println!("Opening file: {:?}", path);
                 if let Ok(content) = fs::read_to_string(&path) {
                     state.state = text_editor::Content::with_text(&content);
+                    state.save_path = path.display().to_string();
                  }
             }
         }
@@ -212,18 +218,16 @@ impl Project {
             "  📄 "
         };
 
-        // 2. Now 'icon' is in scope for the button
         let content = button(text(format!("{}{}", icon, node.name)))
             .on_press(if node.is_dir {
                 Message::ToggleFolder(node.path.clone())
             } else {
                 Message::OpenFile(node.path.clone())
             })
-            .style(button::text)  // Or button::text in v0.12+
+            .style(button::text)
             .padding(5)
             .width(Length::Fill);
 
-        // 3. Recursive rendering
         if node.is_expanded && !node.children.is_empty() {
             let mut col = column![content];
 
@@ -262,3 +266,4 @@ fn toggle_node(node: &mut FileNode, target_path: &PathBuf) {
         }
     }
 }
+//testing
