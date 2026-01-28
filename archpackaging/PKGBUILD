@@ -1,5 +1,5 @@
 # Maintainer: ExpoInf | uoonite@gmail.com
-pkgname=gravity-git
+pkgname=gravity
 _pkgname=Gravity
 pkgver=0.0.4.r0.gabcdef
 pkgrel=1
