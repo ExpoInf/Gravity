@@ -1,5 +1,5 @@
-use iced::widget::{column, row, text, text_editor, text_input, button, container, scrollable};
-use iced::{keyboard, Element, Length, Subscription, Task, Padding};
+use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
+use iced::{keyboard, Background, Border, Color, Element, Length, Subscription, Task, Theme, Padding};
 use iced::event;
 use iced::event::Event;
 use std::fs;
@@ -115,31 +115,94 @@ impl Project {
             container(text("No folder open"))
         };
 
-        let sidebar = column![
+        let sidebar_content = column![
             text("Save Directory/File:"),
-            text_input("path/to/file.txt", &state.save_path)
-                .on_input(Message::PathChanged)
-                .padding(10),
+text_input("path/to/file.txt", &state.save_path)
+.on_input(Message::PathChanged)
+                .padding(10)
+                .style(|_theme, _status| text_input::Style {
+                    // 1. Background
+                    background: Background::Color(Color::from_rgb8(40, 40, 40)),
+
+                    // 2. Border
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 0.0,
+                        color: Color::from_rgb8(80, 80, 80),
+                    },
+
+                    // 3. Text & Cursor Colors
+                    icon: Color::from_rgb8(120, 120, 120),
+                    value: Color::WHITE,
+                    placeholder: Color::from_rgb8(120, 120, 120),
+                    selection: Color::from_rgb8(60, 100, 200),
+                }),
+
+
             text("Save Directory/File:"),
             text_input("Path to browse:", &state.browsing_path)
                 .on_input(Message::BrowsePathChanged)
-                .padding(10),
+                .padding(10)
+            .on_input(Message::PathChanged)
+                .padding(10)
+                .style(|_theme, _status| text_input::Style {
+                    // 1. Background
+                    background: Background::Color(Color::from_rgb8(40, 40, 40)),
+
+                    // 2. Border
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 0.0,
+                        color: Color::from_rgb8(80, 80, 80),
+                    },
+
+                    // 3. Text & Cursor Colors
+                    icon: Color::from_rgb8(120, 120, 120), // <--- Added missing Icon color
+                    value: Color::WHITE,
+                    placeholder: Color::from_rgb8(120, 120, 120),
+                    selection: Color::from_rgb8(60, 100, 200)
+                      }),
             tree_view
         ]
-            .spacing(10)
+            .spacing(10);
+        let sidebar = container(sidebar_content)
             .padding(10)
-            .width(Length::Fixed(200.0));
+            .width(225)
+            .height(Length::Fill)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
+                text_color: Some(Color::WHITE),
+
+                border: Border {
+                    color: Color::from_rgb8(35, 35, 35),
+                    width: 2.0,
+                    radius: 7.0.into()
+                },
+                ..Default::default()
+            });
+
+
+        let divider = container(rule::vertical(0).style(|_theme| {
+            iced::widget::rule::Style {
+                color: Color::from_rgb8(80, 80, 80),
+                radius: 0.0.into(),
+                fill_mode: iced::widget::rule::FillMode::Full,
+                snap: true, // <--- ADD THIS LINE
+            }
+        }))
+            .padding(3.5);
+
 
         let editor = text_editor(&state.state)
             .placeholder("Type something here...")
             .on_action(Message::Edit)
             .height(Length::Fill);
 
-        row![
+        container(row![
             sidebar,
+            divider,
             editor
-        ]
-            .into()
+        ]).height(Length::Fill).padding(10).into()
     }
 
     fn update(state: &mut Project, message: Message) {
