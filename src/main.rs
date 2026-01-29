@@ -1,3 +1,8 @@
+//TO-DO:
+//1. make GUI non-shit
+//2. syntax highlighting
+//3. ctrl-f
+//make an icon
 use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
 use iced::{keyboard, Background, Border, Color, Element, Length, Subscription, Task, Theme, Padding};
 use iced::event;
@@ -176,7 +181,7 @@ text_input("path/to/file.txt", &state.save_path)
                 border: Border {
                     color: Color::from_rgb8(35, 35, 35),
                     width: 2.0,
-                    radius: 7.0.into()
+                    radius: 8.0.into()
                 },
                 ..Default::default()
             });
