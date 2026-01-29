@@ -3,6 +3,7 @@
 //2. syntax highlighting
 //3. ctrl-f
 //make an icon
+use iced::widget::scrollable::Scrollable;
 use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
 use iced::{keyboard, Background, Border, Color, Element, Length, Subscription, Task, Theme, Padding};
 use iced::event;
@@ -14,12 +15,29 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
+use std::process::Command;
 
 struct Project {
     state: text_editor::Content,
     save_path: String,
+    shell: String,
+    shell_output: Vec<String>,
     file_tree: Option<FileNode>,
     browsing_path: String,
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    Edit(text_editor::Action),
+    PathChanged(String),
+    Save,
+    Test,
+    ShellInputChange(String),
+    ShellInputSubmit,
+    ShellResult(String),
+    ToggleFolder(PathBuf),
+    OpenFile(PathBuf),
+    BrowsePathChanged(String),
 }
 
 struct FileNode {
@@ -90,22 +108,15 @@ impl Default for Project {
         Self {
             state: text_editor::Content::default(),
             save_path: String::from("Gravity_Test.txt"),
+            shell: String::new(),
+            shell_output: Vec::new(),
             file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity"),
             browsing_path: String::from("/"),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-enum Message {
-    Edit(text_editor::Action),
-    PathChanged(String),
-    Save,
-    Test,
-    ToggleFolder(PathBuf),
-    OpenFile(PathBuf),
-    BrowsePathChanged(String),
-}
+
 
 impl Project {
     fn view(state: &Project) -> Element<'_, Message> {
@@ -188,10 +199,10 @@ text_input("path/to/file.txt", &state.save_path)
 
 
         let divider = container(rule::vertical(0).style(|_theme| {
-            iced::widget::rule::Style {
+            rule::Style {
                 color: Color::from_rgb8(80, 80, 80),
                 radius: 0.0.into(),
-                fill_mode: iced::widget::rule::FillMode::Full,
+                fill_mode: rule::FillMode::Full,
                 snap: true, // <--- ADD THIS LINE
             }
         }))
@@ -199,29 +210,96 @@ text_input("path/to/file.txt", &state.save_path)
 
 
         let editor = text_editor(&state.state)
-            .placeholder("Type something here...")
+            .placeholder("Start typing...")
             .on_action(Message::Edit)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .style(|_theme, _status| text_editor::Style {
+                background: Background::Color(Color::from_rgb8(35, 35, 35)),
+                border: Border {
+                    radius: 8.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                placeholder: Color::from_rgb8(120, 120, 120),
+                value: Color::WHITE,
+                selection: Color::from_rgb8(60, 100, 200),
+            });
+        let terminal_log: Scrollable<'_, Message, Theme, iced::Renderer> = scrollable(
+            column(
+                state.shell_output.iter().map(|line| {
+                    text(line)
+                        .size(12)
+                        .font(iced::font::Font::MONOSPACE)
+                        .into()
+                })
+            )
+                .spacing(2)
+        )
+            .height(Length::Fill)
+            .width(Length::Fill);
+
+        let shell = text_input("...", &state.shell)
+            .on_input(Message::ShellInputChange)
+            .on_submit(Message::ShellInputSubmit)
+            .style(|_theme, _status| text_input::Style {
+                background: Background::Color(Color::from_rgb8(40, 40, 40)),
+                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                value: Color::WHITE, // Matrix Green text
+                placeholder: Color::from_rgb8(80, 80, 80),
+                selection: Color::from_rgb8(60, 100, 200),
+                icon: Color::WHITE,
+            });
+
+        let terminal_panel = container(column![
+            terminal_log,
+            container(shell).padding(5).style(|_theme: &Theme| container::Style {
+                border: Border { width: 0.0, color: Color::from_rgb8(60, 60, 60), radius: 0.0.into() },
+                 ..container::Style::default()
+            })
+        ])
+            .height(Length::Fixed(300.0))
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
+                text_color: Some(Color::WHITE),
+                // ADD THIS BORDER BLOCK:
+                border: Border {
+                    radius: 8.0.into(), // Set your desired roundness here (e.g., 10.0 or 12.0)
+                    width: 0.0,          // Set to 1.0 if you want a visible outline
+                    color: Color::TRANSPARENT,
+                },
+                ..container::Style::default()
+            });
+
+        let main_content = column![
+            editor,
+            terminal_panel
+        ].spacing(10);
 
         container(row![
             sidebar,
             divider,
-            editor
+            main_content,
         ]).height(Length::Fill).padding(10).into()
+
+
+
     }
 
-    fn update(state: &mut Project, message: Message) {
+    fn update(state: &mut Project, message: Message) -> Task<Message> {
         match message {
             Message::Edit(action) => {
                 state.state.perform(action);
+                Task::none()
             },
 
             Message::PathChanged(new_path) => {
                 state.save_path = new_path;
+                Task::none()
             },
             Message::BrowsePathChanged(new_path) => {
                 state.file_tree = build_gui_tree(new_path.as_str());
                 state.browsing_path = new_path;
+                Task::none()
             }
             Message::Save => {
                 let file_path = &state.save_path;
@@ -229,7 +307,7 @@ text_input("path/to/file.txt", &state.save_path)
 
                 if file_path.trim().is_empty() {
                     println!("Cannot save: Path is empty");
-                    return;
+                    return Default::default()
                 }
 
                 println!("Saving to: {}", file_path);
@@ -243,15 +321,17 @@ text_input("path/to/file.txt", &state.save_path)
                     let mut file = File::create(&file_path).expect("Failed to create file");
                     file.write_all(state.state.text().as_ref()).expect("Failed to write file");
                 }
-
+                Task::none()
             }
             Message::Test => {
                 let _dir_tree = build_gui_tree(state.save_path.as_str()).unwrap();
+                Task::none()
             }
             Message::ToggleFolder(path) => {
                 if let Some(ref mut root) = state.file_tree {
                     toggle_node(root, &path);
                 }
+                Task::none()
             }
 
             Message::OpenFile(path) => {
@@ -260,6 +340,30 @@ text_input("path/to/file.txt", &state.save_path)
                     state.state = text_editor::Content::with_text(&content);
                     state.save_path = path.display().to_string();
                  }
+                Task::none()
+            }
+            Message::ShellInputChange(shell_input) => {
+                state.shell = shell_input;
+                Task::none()
+            }
+            Message::ShellInputSubmit => {
+                let cmd_text = state.shell.clone();
+                if cmd_text.trim().is_empty() { return Task::none(); }
+
+                // 1. Add command to history
+                state.shell_output.push(format!("$ {}", cmd_text));
+                state.shell.clear();
+
+                // 2. Perform Async Task
+                // We use `Task::perform` so the UI doesn't freeze while the command runs
+                Task::perform(async move {
+                    run_system_command(&cmd_text).await
+                }, Message::ShellResult)
+
+            }
+            Message::ShellResult(output) => {
+                state.shell_output.push(output);
+                Task::none()
             }
         }
     }
@@ -274,8 +378,8 @@ text_input("path/to/file.txt", &state.save_path)
                                 }) => {
                     if modifiers.command() {
                         match key {
-                            iced::keyboard::Key::Character(c) if c == "s" || c == "S" => Some(Message::Save),
-                            iced::keyboard::Key::Character(c) if c == "t" || c == "T" => Some(Message::Test),
+                            keyboard::Key::Character(c) if c == "s" || c == "S" => Some(Message::Save),
+                            keyboard::Key::Character(c) if c == "t" || c == "T" => Some(Message::Test),
                             _ => None,
                         }
                     } else {
@@ -343,6 +447,25 @@ fn toggle_node(node: &mut FileNode, target_path: &PathBuf) {
         for child in &mut node.children {
             toggle_node(child, target_path);
         }
+    }
+}
+
+async fn run_system_command(command: &str) -> String {
+    // Split command into program and args (very basic splitting)
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() { return String::new(); }
+
+    let program = parts[0];
+    let args = &parts[1..];
+
+    // Run the command
+    match Command::new(program).args(args).output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            format!("{}{}", stdout, stderr)
+        },
+        Err(e) => format!("Error: {}", e),
     }
 }
 //testing
