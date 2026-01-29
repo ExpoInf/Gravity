@@ -1,8 +1,8 @@
 //TO-DO:
-//1. make GUI non-shit
 //2. syntax highlighting
 //3. ctrl-f
 //make an icon
+use std::env;
 use iced::widget::scrollable::Scrollable;
 use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
 use iced::{keyboard, Background, Border, Color, Element, Length, Subscription, Task, Theme, Padding};
@@ -22,6 +22,7 @@ struct Project {
     save_path: String,
     shell: String,
     shell_output: Vec<String>,
+    shell_path: PathBuf,
     file_tree: Option<FileNode>,
     browsing_path: String,
 }
@@ -110,6 +111,7 @@ impl Default for Project {
             save_path: String::from("Gravity_Test.txt"),
             shell: String::new(),
             shell_output: Vec::new(),
+            shell_path: env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity"),
             browsing_path: String::from("/"),
         }
@@ -351,17 +353,49 @@ text_input("path/to/file.txt", &state.save_path)
                 if cmd_text.trim().is_empty() { return Task::none(); }
 
                 // 1. Add command to history
-                state.shell_output.push(format!("$ {}", cmd_text));
+                // We show the current path in the prompt (e.g. "~/projects $ ls")
+                let prompt_path = state.shell_path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                state.shell_output.push(format!("[{}] $ {}", prompt_path, cmd_text));
+
                 state.shell.clear();
 
-                // 2. Perform Async Task
-                // We use `Task::perform` so the UI doesn't freeze while the command runs
+                // 2. INTERCEPT 'cd' COMMAND
+                let parts: Vec<&str> = cmd_text.split_whitespace().collect();
+                if let Some(cmd) = parts.first() {
+                    if *cmd == "cd" {
+                        let new_dir = if parts.len() > 1 {
+                            PathBuf::from(parts[1])
+                        } else {
+                            // 'cd' with no args usually goes home, but we'll just go to root or stay put
+                            PathBuf::from("/")
+                        };
+
+                        // Resolve relative paths (like "..")
+                        let target_path = if new_dir.is_absolute() {
+                            new_dir
+                        } else {
+                            state.shell_path.join(new_dir)
+                        };
+
+                        // Check if it exists before switching
+                        match target_path.canonicalize() {
+                            Ok(p) => state.shell_path = p,
+                            Err(e) => state.shell_output.push(format!("cd: {}", e)),
+                        }
+
+                        return Task::none();
+                    }
+                }
+
+                // 3. Run other commands in the correct directory
+                let cwd = state.shell_path.clone(); // Clone to send to async task
+
                 Task::perform(async move {
                     run_system_command(&cmd_text).await
                 }, Message::ShellResult)
-
-            }
-            Message::ShellResult(output) => {
+            }Message::ShellResult(output) => {
                 state.shell_output.push(output);
                 Task::none()
             }
