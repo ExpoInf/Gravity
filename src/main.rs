@@ -1,7 +1,5 @@
-//TO-DO:
-//2. syntax highlighting
-//3. ctrl-f
-//make an icon
+use iced::widget::scrollable::Scrollbar;
+use iced::widget::scrollable::Direction;
 use std::env;
 use iced::widget::scrollable::Scrollable;
 use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
@@ -24,6 +22,7 @@ struct Project {
     shell_output: Vec<String>,
     shell_path: PathBuf,
     file_tree: Option<FileNode>,
+    open_files: Vec<PathBuf>,
     browsing_path: String,
 }
 
@@ -38,6 +37,7 @@ enum Message {
     ShellResult(String),
     ToggleFolder(PathBuf),
     OpenFile(PathBuf),
+    OpenTab(PathBuf),
     BrowsePathChanged(String),
 }
 
@@ -48,6 +48,11 @@ struct FileNode {
     children: Vec<FileNode>,
     is_expanded: bool,
 }
+
+
+
+//FileNode: gifted power
+//SimpleFile: pure effort
 
 impl FileNode {
     fn new(path: PathBuf, is_dir: bool) -> Self {
@@ -113,6 +118,7 @@ impl Default for Project {
             shell_output: Vec::new(),
             shell_path: env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity"),
+            open_files: Vec::new(),
             browsing_path: String::from("/"),
         }
     }
@@ -226,6 +232,23 @@ text_input("path/to/file.txt", &state.save_path)
                 value: Color::WHITE,
                 selection: Color::from_rgb8(60, 100, 200),
             });
+        let tabs = container (
+                create_file_tabs(state.open_files.clone())
+
+        )
+            .height(50)
+            .width(Length::Fill)
+            .center_y(50)
+            .padding(5)
+            .style(|_theme| container::Style{
+                background: Some(Background::Color(Color::from_rgb8(30,30,30))),
+                border: Border {
+                    radius: 8.0.into(),
+                    width: 0.0,
+                    color: Color::WHITE
+                },
+                ..Default::default()
+            });
         let terminal_log: Scrollable<'_, Message, Theme, iced::Renderer> = scrollable(
             column(
                 state.shell_output.iter().map(|line| {
@@ -263,16 +286,16 @@ text_input("path/to/file.txt", &state.save_path)
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 text_color: Some(Color::WHITE),
-                // ADD THIS BORDER BLOCK:
                 border: Border {
-                    radius: 8.0.into(), // Set your desired roundness here (e.g., 10.0 or 12.0)
-                    width: 0.0,          // Set to 1.0 if you want a visible outline
+                    radius: 8.0.into(),
+                    width: 0.0,
                     color: Color::TRANSPARENT,
                 },
                 ..container::Style::default()
             });
 
         let main_content = column![
+            tabs,
             editor,
             terminal_panel
         ].spacing(10);
@@ -342,6 +365,17 @@ text_input("path/to/file.txt", &state.save_path)
                     state.state = text_editor::Content::with_text(&content);
                     state.save_path = path.display().to_string();
                  }
+                state.open_files.push(path);
+                //for i in 0..state.open_files.len()-1 {
+                    //println!("file tabs test: {:?}", state.open_files[i]);
+                //}
+                Task::none()
+            }
+            Message::OpenTab(path) => {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    state.state = text_editor::Content::with_text(&content);
+                    state.save_path = path.display().to_string();
+                }
                 Task::none()
             }
             Message::ShellInputChange(shell_input) => {
@@ -352,8 +386,6 @@ text_input("path/to/file.txt", &state.save_path)
                 let cmd_text = state.shell.clone();
                 if cmd_text.trim().is_empty() { return Task::none(); }
 
-                // 1. Add command to history
-                // We show the current path in the prompt (e.g. "~/projects $ ls")
                 let prompt_path = state.shell_path.file_name()
                     .unwrap_or_default()
                     .to_string_lossy();
@@ -361,18 +393,15 @@ text_input("path/to/file.txt", &state.save_path)
 
                 state.shell.clear();
 
-                // 2. INTERCEPT 'cd' COMMAND
                 let parts: Vec<&str> = cmd_text.split_whitespace().collect();
                 if let Some(cmd) = parts.first() {
                     if *cmd == "cd" {
                         let new_dir = if parts.len() > 1 {
                             PathBuf::from(parts[1])
                         } else {
-                            // 'cd' with no args usually goes home, but we'll just go to root or stay put
                             PathBuf::from("/")
                         };
 
-                        // Resolve relative paths (like "..")
                         let target_path = if new_dir.is_absolute() {
                             new_dir
                         } else {
@@ -388,9 +417,6 @@ text_input("path/to/file.txt", &state.save_path)
                         return Task::none();
                     }
                 }
-
-                // 3. Run other commands in the correct directory
-                let cwd = state.shell_path.clone(); // Clone to send to async task
 
                 Task::perform(async move {
                     run_system_command(&cmd_text).await
@@ -485,14 +511,12 @@ fn toggle_node(node: &mut FileNode, target_path: &PathBuf) {
 }
 
 async fn run_system_command(command: &str) -> String {
-    // Split command into program and args (very basic splitting)
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() { return String::new(); }
 
     let program = parts[0];
     let args = &parts[1..];
-
-    // Run the command
+    
     match Command::new(program).args(args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -501,5 +525,33 @@ async fn run_system_command(command: &str) -> String {
         },
         Err(e) => format!("Error: {}", e),
     }
+}
+fn create_file_tabs(file_tabs: Vec<PathBuf>) -> Element<'static, Message> {
+    let tabs_row = file_tabs
+        .into_iter()
+        .fold(row![].spacing(10), |tabs, path| {
+            tabs.push(
+                button(text(format!("{}", path.display())))
+                    .on_press(Message::OpenTab(path))
+                    .style(|_theme, status| {
+                        button::Style {
+                            background: Some(Background::Color(Color::from_rgb8(35, 35, 35))),
+                            text_color: Color::WHITE,
+                            border: Border { radius: 8.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+            )
+        });
+
+    scrollable(tabs_row)
+        .direction(Direction::Horizontal(
+            Scrollbar::new()
+                .width(0)
+                .scroller_width(0)
+        ))
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .into()
 }
 //testing
