@@ -1,19 +1,22 @@
-use iced::widget::scrollable::Scrollbar;
-use iced::widget::scrollable::Direction;
-use std::env;
-use iced::widget::scrollable::Scrollable;
-use iced::widget::{column, container, row, text, text_editor, text_input, rule, scrollable, button, };
-use iced::{keyboard, Background, Border, Color, Element, Length, Subscription, Task, Theme, Padding};
-use iced::event;
+mod config_lib;
+
+use crate::config_lib::{load_config, AppConfig};
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{
+    button, column, container, row, rule, scrollable, text, text_editor, text_input, Scrollable,
+};
+use iced::{
+    event, keyboard, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme,
+};
 use iced::event::Event;
-use std::fs;
-use walkdir::WalkDir;
-use std::path::PathBuf;
 use std::collections::HashMap;
-use std::path::Path;
-use std::fs::File;
+use std::env;
+use std::fs::{self, File};
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
+use walkdir::WalkDir;
 
 struct Project {
     state: text_editor::Content,
@@ -49,36 +52,39 @@ struct FileNode {
     is_expanded: bool,
 }
 
-
-
-//FileNode: gifted power
-//SimpleFile: pure effort
+// Renamed SETTINGS -> APP_CONFIG (SCREAMING_SNAKE_CASE for statics)
+static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(|| {
+    load_config().expect("Could not read settings")
+});
 
 impl FileNode {
     fn new(path: PathBuf, is_dir: bool) -> Self {
         Self {
-            name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             path,
             is_dir,
             children: Vec::new(),
             is_expanded: false,
         }
     }
+
     fn sort_children(&mut self) {
-        self.children.sort_by(|a, b| {
-            match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
+        self.children.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
     }
 }
 
 fn build_gui_tree(root_path: &str) -> Option<FileNode> {
     let mut nodes: HashMap<PathBuf, FileNode> = HashMap::new();
+    // Handle potential error if path doesn't exist
     let root_buf = PathBuf::from(root_path).canonicalize().ok()?;
-
 
     for entry in WalkDir::new(&root_buf).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path().to_path_buf();
@@ -88,10 +94,13 @@ fn build_gui_tree(root_path: &str) -> Option<FileNode> {
 
     let mut paths: Vec<PathBuf> = nodes.keys().cloned().collect();
 
+    // Sort by depth (deepest first) to build tree bottom-up
     paths.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
 
     for path in paths {
-        if path == root_buf { continue; }
+        if path == root_buf {
+            continue;
+        }
 
         if let Some(parent_path) = path.parent() {
             if let Some(mut child_node) = nodes.remove(&path) {
@@ -117,6 +126,7 @@ impl Default for Project {
             shell: String::new(),
             shell_output: Vec::new(),
             shell_path: env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            // Note: You might want to change this hardcoded path for portability
             file_tree: build_gui_tree("/Users/exi/RustroverProjects/Gravity"),
             open_files: Vec::new(),
             browsing_path: String::from("/"),
@@ -124,71 +134,51 @@ impl Default for Project {
     }
 }
 
-
-
 impl Project {
     fn view(state: &Project) -> Element<'_, Message> {
         let tree_view = if let Some(root) = &state.file_tree {
-            container(
-                scrollable(
-                    Self::view_file_tree(root)
-                )
-            )
-                .height(Length::Fill)
+            container(scrollable(Self::view_file_tree(root))).height(Length::Fill)
         } else {
             container(text("No folder open"))
         };
 
         let sidebar_content = column![
             text("Save Directory/File:"),
-text_input("path/to/file.txt", &state.save_path)
-.on_input(Message::PathChanged)
+            text_input("path/to/file.txt", &state.save_path)
+                .on_input(Message::PathChanged)
                 .padding(10)
                 .style(|_theme, _status| text_input::Style {
-                    // 1. Background
-                    background: Background::Color(Color::from_rgb8(40, 40, 40)),
-
-                    // 2. Border
+                    background: Background::Color(Color::from_rgb8(APP_CONFIG.accent_r, APP_CONFIG.accent_g, APP_CONFIG.accent_b)),
                     border: Border {
                         radius: 8.0.into(),
                         width: 0.0,
                         color: Color::from_rgb8(80, 80, 80),
                     },
-
-                    // 3. Text & Cursor Colors
                     icon: Color::from_rgb8(120, 120, 120),
                     value: Color::WHITE,
                     placeholder: Color::from_rgb8(120, 120, 120),
                     selection: Color::from_rgb8(60, 100, 200),
                 }),
-
-
-            text("Save Directory/File:"),
+            text("Browse Directory:"),
             text_input("Path to browse:", &state.browsing_path)
                 .on_input(Message::BrowsePathChanged)
                 .padding(10)
-            .on_input(Message::PathChanged)
-                .padding(10)
                 .style(|_theme, _status| text_input::Style {
-                    // 1. Background
-                    background: Background::Color(Color::from_rgb8(40, 40, 40)),
-
-                    // 2. Border
+                    background: Background::Color(Color::from_rgb8(APP_CONFIG.accent_r, APP_CONFIG.accent_g, APP_CONFIG.accent_b)),
                     border: Border {
                         radius: 8.0.into(),
                         width: 0.0,
                         color: Color::from_rgb8(80, 80, 80),
                     },
-
-                    // 3. Text & Cursor Colors
-                    icon: Color::from_rgb8(120, 120, 120), // <--- Added missing Icon color
+                    icon: Color::from_rgb8(120, 120, 120),
                     value: Color::WHITE,
                     placeholder: Color::from_rgb8(120, 120, 120),
                     selection: Color::from_rgb8(60, 100, 200)
-                      }),
+                }),
             tree_view
         ]
             .spacing(10);
+
         let sidebar = container(sidebar_content)
             .padding(10)
             .width(225)
@@ -196,26 +186,23 @@ text_input("path/to/file.txt", &state.save_path)
             .style(|_theme: &Theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 text_color: Some(Color::WHITE),
-
                 border: Border {
                     color: Color::from_rgb8(35, 35, 35),
                     width: 2.0,
-                    radius: 8.0.into()
+                    radius: 8.0.into(),
                 },
                 ..Default::default()
             });
-
 
         let divider = container(rule::vertical(0).style(|_theme| {
             rule::Style {
                 color: Color::from_rgb8(80, 80, 80),
                 radius: 0.0.into(),
                 fill_mode: rule::FillMode::Full,
-                snap: true, // <--- ADD THIS LINE
+                snap: true,
             }
         }))
             .padding(3.5);
-
 
         let editor = text_editor(&state.state)
             .placeholder("Start typing...")
@@ -232,44 +219,46 @@ text_input("path/to/file.txt", &state.save_path)
                 value: Color::WHITE,
                 selection: Color::from_rgb8(60, 100, 200),
             });
-        let tabs = container (
-                create_file_tabs(state.open_files.clone())
 
-        )
+        let tabs = container(create_file_tabs(state.open_files.clone()))
             .height(50)
             .width(Length::Fill)
             .center_y(50)
             .padding(5)
-            .style(|_theme| container::Style{
-                background: Some(Background::Color(Color::from_rgb8(30,30,30))),
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 border: Border {
                     radius: 8.0.into(),
                     width: 0.0,
-                    color: Color::WHITE
+                    color: Color::WHITE,
                 },
                 ..Default::default()
             });
+
         let terminal_log: Scrollable<'_, Message, Theme, iced::Renderer> = scrollable(
-            column(
-                state.shell_output.iter().map(|line| {
-                    text(line)
-                        .size(12)
-                        .font(iced::font::Font::MONOSPACE)
-                        .into()
-                })
-            )
-                .spacing(2)
+            column(state.shell_output.iter().map(|line| {
+                text(line)
+                    .size(12)
+                    .font(iced::font::Font::MONOSPACE)
+                    .into()
+            }))
+                .spacing(2),
         )
             .height(Length::Fill)
             .width(Length::Fill);
 
+        // Updated to use APP_CONFIG
         let shell = text_input("...", &state.shell)
             .on_input(Message::ShellInputChange)
             .on_submit(Message::ShellInputSubmit)
             .style(|_theme, _status| text_input::Style {
-                background: Background::Color(Color::from_rgb8(40, 40, 40)),
-                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
-                value: Color::WHITE, // Matrix Green text
+                background: Background::Color(Color::from_rgb8(APP_CONFIG.accent_r, APP_CONFIG.accent_g, APP_CONFIG.accent_b)),
+                border: Border {
+                    radius: 8.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                value: Color::WHITE,
                 placeholder: Color::from_rgb8(80, 80, 80),
                 selection: Color::from_rgb8(60, 100, 200),
                 icon: Color::WHITE,
@@ -277,9 +266,15 @@ text_input("path/to/file.txt", &state.save_path)
 
         let terminal_panel = container(column![
             terminal_log,
-            container(shell).padding(5).style(|_theme: &Theme| container::Style {
-                border: Border { width: 0.0, color: Color::from_rgb8(60, 60, 60), radius: 0.0.into() },
-                 ..container::Style::default()
+            container(shell).padding(5).style(|_theme: &Theme| {
+                container::Style {
+                    border: Border {
+                        width: 0.0,
+                        color: Color::from_rgb8(60, 60, 60),
+                        radius: 0.0.into(),
+                    },
+                    ..container::Style::default()
+                }
             })
         ])
             .height(Length::Fixed(300.0))
@@ -294,20 +289,12 @@ text_input("path/to/file.txt", &state.save_path)
                 ..container::Style::default()
             });
 
-        let main_content = column![
-            tabs,
-            editor,
-            terminal_panel
-        ].spacing(10);
+        let main_content = column![tabs, editor, terminal_panel].spacing(10);
 
-        container(row![
-            sidebar,
-            divider,
-            main_content,
-        ]).height(Length::Fill).padding(10).into()
-
-
-
+        container(row![sidebar, divider, main_content])
+            .height(Length::Fill)
+            .padding(10)
+            .into()
     }
 
     fn update(state: &mut Project, message: Message) -> Task<Message> {
@@ -315,12 +302,11 @@ text_input("path/to/file.txt", &state.save_path)
             Message::Edit(action) => {
                 state.state.perform(action);
                 Task::none()
-            },
-
+            }
             Message::PathChanged(new_path) => {
                 state.save_path = new_path;
                 Task::none()
-            },
+            }
             Message::BrowsePathChanged(new_path) => {
                 state.file_tree = build_gui_tree(new_path.as_str());
                 state.browsing_path = new_path;
@@ -329,10 +315,9 @@ text_input("path/to/file.txt", &state.save_path)
             Message::Save => {
                 let file_path = &state.save_path;
 
-
                 if file_path.trim().is_empty() {
                     println!("Cannot save: Path is empty");
-                    return Default::default()
+                    return Default::default();
                 }
 
                 println!("Saving to: {}", file_path);
@@ -358,17 +343,13 @@ text_input("path/to/file.txt", &state.save_path)
                 }
                 Task::none()
             }
-
             Message::OpenFile(path) => {
                 println!("Opening file: {:?}", path);
                 if let Ok(content) = fs::read_to_string(&path) {
                     state.state = text_editor::Content::with_text(&content);
                     state.save_path = path.display().to_string();
-                 }
+                }
                 state.open_files.push(path);
-                //for i in 0..state.open_files.len()-1 {
-                    //println!("file tabs test: {:?}", state.open_files[i]);
-                //}
                 Task::none()
             }
             Message::OpenTab(path) => {
@@ -384,12 +365,18 @@ text_input("path/to/file.txt", &state.save_path)
             }
             Message::ShellInputSubmit => {
                 let cmd_text = state.shell.clone();
-                if cmd_text.trim().is_empty() { return Task::none(); }
+                if cmd_text.trim().is_empty() {
+                    return Task::none();
+                }
 
-                let prompt_path = state.shell_path.file_name()
+                let prompt_path = state
+                    .shell_path
+                    .file_name()
                     .unwrap_or_default()
                     .to_string_lossy();
-                state.shell_output.push(format!("[{}] $ {}", prompt_path, cmd_text));
+                state
+                    .shell_output
+                    .push(format!("[{}] $ {}", prompt_path, cmd_text));
 
                 state.shell.clear();
 
@@ -408,7 +395,6 @@ text_input("path/to/file.txt", &state.save_path)
                             state.shell_path.join(new_dir)
                         };
 
-                        // Check if it exists before switching
                         match target_path.canonicalize() {
                             Ok(p) => state.shell_path = p,
                             Err(e) => state.shell_output.push(format!("cd: {}", e)),
@@ -418,10 +404,14 @@ text_input("path/to/file.txt", &state.save_path)
                     }
                 }
 
-                Task::perform(async move {
-                    run_system_command(&cmd_text).await
-                }, Message::ShellResult)
-            }Message::ShellResult(output) => {
+                // Cleaned up async block
+                Task::perform(
+                    async move { run_system_command(&cmd_text).await },
+                    Message::ShellResult,
+                )
+            }
+            // Fixed syntax error here (missing separation from previous arm)
+            Message::ShellResult(output) => {
                 state.shell_output.push(output);
                 Task::none()
             }
@@ -429,31 +419,26 @@ text_input("path/to/file.txt", &state.save_path)
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(|event, _status, _id| {
-            match event {
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                                    key,
-                                    modifiers,
-                                    ..
-                                }) => {
-                    if modifiers.command() {
-                        match key {
-                            keyboard::Key::Character(c) if c == "s" || c == "S" => Some(Message::Save),
-                            keyboard::Key::Character(c) if c == "t" || c == "T" => Some(Message::Test),
-                            _ => None,
-                        }
-                    } else {
-                        None
+        event::listen_with(|event, _status, _id| match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if modifiers.command() {
+                    match key {
+                        keyboard::Key::Character(c) if c == "s" || c == "S" => Some(Message::Save),
+                        keyboard::Key::Character(c) if c == "t" || c == "T" => Some(Message::Test),
+                        _ => None,
                     }
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
     }
 
     fn init() -> (Self, Task<Message>) {
         (Self::default(), Task::none())
     }
+
     fn view_file_tree(node: &FileNode) -> Element<'_, Message> {
         let icon = if node.is_dir {
             if node.is_expanded { "▼ 📂 " } else { "▶ 📁 " }
@@ -475,15 +460,12 @@ text_input("path/to/file.txt", &state.save_path)
             let mut col = column![content];
 
             for child in &node.children {
-                col = col.push(
-                    container(Self::view_file_tree(child))
-                        .padding(Padding {
-                            top: 0.0,
-                            right: 0.0,
-                            bottom: 0.0,
-                            left: 15.0,
-                        })
-                );
+                col = col.push(container(Self::view_file_tree(child)).padding(Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 15.0,
+                }));
             }
             col.into()
         } else {
@@ -499,7 +481,6 @@ fn main() -> iced::Result {
         .run()
 }
 
-
 fn toggle_node(node: &mut FileNode, target_path: &PathBuf) {
     if node.path == *target_path {
         node.is_expanded = !node.is_expanded;
@@ -512,46 +493,45 @@ fn toggle_node(node: &mut FileNode, target_path: &PathBuf) {
 
 async fn run_system_command(command: &str) -> String {
     let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() { return String::new(); }
+    if parts.is_empty() {
+        return String::new();
+    }
 
     let program = parts[0];
     let args = &parts[1..];
-    
+
     match Command::new(program).args(args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             format!("{}{}", stdout, stderr)
-        },
+        }
         Err(e) => format!("Error: {}", e),
     }
 }
+
 fn create_file_tabs(file_tabs: Vec<PathBuf>) -> Element<'static, Message> {
-    let tabs_row = file_tabs
-        .into_iter()
-        .fold(row![].spacing(10), |tabs, path| {
-            tabs.push(
-                button(text(format!("{}", path.display())))
-                    .on_press(Message::OpenTab(path))
-                    .style(|_theme, status| {
-                        button::Style {
-                            background: Some(Background::Color(Color::from_rgb8(35, 35, 35))),
-                            text_color: Color::WHITE,
-                            border: Border { radius: 8.0.into(), ..Default::default() },
-                            ..Default::default()
-                        }
-                    })
-            )
-        });
+    let tabs_row = file_tabs.into_iter().fold(row![].spacing(10), |tabs, path| {
+        tabs.push(
+            button(text(format!("{}", path.display())))
+                .on_press(Message::OpenTab(path))
+                .style(|_theme, _status| button::Style {
+                    background: Some(Background::Color(Color::from_rgb8(35, 35, 35))),
+                    text_color: Color::WHITE,
+                    border: Border {
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+        )
+    });
 
     scrollable(tabs_row)
         .direction(Direction::Horizontal(
-            Scrollbar::new()
-                .width(0)
-                .scroller_width(0)
+            Scrollbar::new().width(0).scroller_width(0),
         ))
         .width(Length::Fill)
         .height(Length::Shrink)
         .into()
 }
-//testing
