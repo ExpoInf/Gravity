@@ -2,13 +2,8 @@ mod config_lib;
 
 use crate::config_lib::{load_config, AppConfig};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{
-    button, column, container, row, rule, scrollable, text, text_editor, text_input, Scrollable,
-};
-use iced::{
-    event, keyboard, window, Background, Border, Color, Element, Length, Padding, Subscription,
-    Task, Theme,
-};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Space};
+use iced::{ event, keyboard, window, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
 use iced::mouse;
 use iced::event::Event;
 use image::GenericImageView;
@@ -22,9 +17,6 @@ use std::sync::LazyLock;
 struct Project {
     state: text_editor::Content,
     save_path: String,
-    shell: String,
-    shell_output: Vec<String>,
-    shell_path: PathBuf,
     file_tree: Option<FileNode>,
     open_files: Vec<PathBuf>,
     browsing_path: String,
@@ -33,6 +25,7 @@ struct Project {
     is_resizing_sidebar: bool,
     is_resizing_terminal: bool,
     last_cursor_pos: Option<iced::Point>,
+    terminal: iced_term::Terminal,
 }
 
 #[derive(Debug, Clone)]
@@ -41,9 +34,6 @@ enum Message {
     PathChanged(String),
     Save,
     Test,
-    ShellInputChange(String),
-    ShellInputSubmit,
-    ShellResult(String),
     ToggleFolder(PathBuf),
     OpenFile(PathBuf),
     OpenTab(PathBuf),
@@ -55,6 +45,7 @@ enum Message {
     StopResizing,
     CursorMoved(iced::Point),
     CloseTab(PathBuf),
+    TerminalEvent(iced_term::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -131,14 +122,28 @@ impl Default for Project {
                     .to_string()
             });
 
-        let default_path = PathBuf::from(&default_str);
+        let system_shell = std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/bash"));
+
+        let term_settings = iced_term::settings::Settings {
+            backend: iced_term::settings::BackendSettings {
+                program: system_shell,
+                args: vec![],
+                ..Default::default()
+            },
+            theme: iced_term::settings::ThemeSettings {
+                color_pallete: Box::new(iced_term::ColorPalette {
+                    background: String::from("#1e1e1e"),
+                    foreground: String::from("#c8c8c8"),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         Self {
             state: text_editor::Content::default(),
             save_path: String::from("Gravity_Test.txt"),
-            shell: String::new(),
-            shell_output: Vec::new(),
-            shell_path: default_path.clone(),
             file_tree: build_root_node(&default_str),
             open_files: Vec::new(),
             browsing_path: default_str,
@@ -147,6 +152,7 @@ impl Default for Project {
             is_resizing_sidebar: false,
             is_resizing_terminal: false,
             last_cursor_pos: None,
+            terminal: iced_term::Terminal::new(0, term_settings).expect("Failed to init terminal"),
         }
     }
 }
@@ -158,6 +164,53 @@ impl Project {
         } else {
             container(text("No folder open"))
         };
+        let editor = text_editor(&state.state)
+            .placeholder("Start typing...")
+            .on_action(Message::Edit)
+            .height(Length::Fill)
+            .style(|_theme, _status| text_editor::Style {
+                background: Background::Color(Color::from_rgb8(35, 35, 35)),
+                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                placeholder: Color::from_rgb8(120, 120, 120),
+                value: Color::WHITE,
+                selection: Color::from_rgb8(60, 100, 200),
+            });
+
+        let tabs = container(create_file_tabs(state.open_files.clone()))
+            .height(50)
+            .width(Length::Fill)
+            .center_y(50)
+            .padding(5)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
+                border: Border { radius: 8.0.into(), width: 0.0, color: Color::WHITE },
+                ..Default::default()
+            });
+
+        let terminal_divider: Element<'_, Message> = mouse_area(
+                                                                 container(Space::new().width(Length::Fill).height(8.0))
+                                                                     .style(|_theme| container::Style {
+                                                                         background: Some(Background::Color(Color::TRANSPARENT)),
+                                                                         ..Default::default()
+                                                                     })
+        )
+            .on_press(Message::StartResizingTerminal)
+            .interaction(iced::mouse::Interaction::ResizingVertically)
+            .into();
+
+        let sidebar_divider: Element<'_, Message> = mouse_area(
+                                                                container(Space::new().width(8.0).height(Length::Fill))
+                                                                    .style(|_theme| container::Style {
+                                                                        background: Some(Background::Color(Color::TRANSPARENT)),
+                                                                        ..Default::default()
+                                                                    })
+        )
+            .on_press(Message::StartResizingSidebar)
+            .interaction(iced::mouse::Interaction::ResizingHorizontally)
+            .into();
+
+
+
 
         let sidebar_content = column![
             text("Current File:"),
@@ -207,8 +260,8 @@ impl Project {
 
         let sidebar = container(sidebar_content)
             .padding(10)
-            .width(275)
             .height(Length::Fill)
+            .width(Length::Fixed(state.sidebar_width))
             .style(|_theme: &Theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 text_color: Some(Color::WHITE),
@@ -216,74 +269,41 @@ impl Project {
                 ..Default::default()
             });
 
-        let divider = container(rule::vertical(0).style(|_theme| rule::Style {
-            color: Color::from_rgb8(80, 80, 80),
-            radius: 0.0.into(),
-            fill_mode: rule::FillMode::Full,
-            snap: true,
-        })).padding(3.5);
-
-        let editor = text_editor(&state.state)
-            .placeholder("Start typing...")
-            .on_action(Message::Edit)
-            .height(Length::Fill)
-            .style(|_theme, _status| text_editor::Style {
-                background: Background::Color(Color::from_rgb8(35, 35, 35)),
-                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
-                placeholder: Color::from_rgb8(120, 120, 120),
-                value: Color::WHITE,
-                selection: Color::from_rgb8(60, 100, 200),
-            });
-
-        let tabs = container(create_file_tabs(state.open_files.clone()))
-            .height(50)
-            .width(Length::Fill)
-            .center_y(50)
+        let terminal_panel = container(
+            iced_term::TerminalView::show(&state.terminal)
+                .map(Message::TerminalEvent)
+        )
             .padding(5)
+            .height(Length::Fixed(state.terminal_height))
+            .width(Length::Fill)
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
-                border: Border { radius: 8.0.into(), width: 0.0, color: Color::WHITE },
+                border: Border { color: Color::TRANSPARENT, width: 2.0, radius: 8.0.into()},
                 ..Default::default()
             });
 
-        let terminal_log: Scrollable<'_, Message, Theme, iced::Renderer> = scrollable(
-            column(state.shell_output.iter().map(|line| {
-                text(line).size(12).font(iced::font::Font::MONOSPACE).into()
-            })).spacing(2)
-        ).height(Length::Fill).width(Length::Fill);
 
-        let shell = text_input("...", &state.shell)
-            .on_input(Message::ShellInputChange)
-            .on_submit(Message::ShellInputSubmit)
-            .style(|_theme, _status| text_input::Style {
-                background: Background::Color(Color::from_rgb8(APP_CONFIG.accent_r, 40, 40)),
-                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
-                value: Color::WHITE,
-                placeholder: Color::from_rgb8(80, 80, 80),
-                selection: Color::from_rgb8(60, 100, 200),
-                icon: Color::WHITE,
-            });
+        let main_content = column![
+    tabs,
+            Space::new().height(10.0),
+    editor,
+    terminal_divider,
+    terminal_panel
+].spacing(0);
 
-        let terminal_panel = container(column![
-            terminal_log,
-            container(shell).padding(5).style(|_theme: &Theme| container::Style {
-                border: Border { width: 0.0, color: Color::from_rgb8(60, 60, 60), radius: 0.0.into() },
-                 ..container::Style::default()
-            })
-        ])
-            .height(Length::Fixed(300.0))
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
-                text_color: Some(Color::WHITE),
-                border: Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
-                ..container::Style::default()
-            });
-
-        let main_content = column![tabs, editor, terminal_panel].spacing(10);
-
-        container(row![sidebar, divider, main_content])
+        container(row![
+    sidebar,
+    sidebar_divider,
+    main_content
+])
             .height(Length::Fill)
+            .width(Length::Fill)
             .padding(10)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(50, 48, 51))),
+                text_color: Some(Color::WHITE),
+                ..Default::default()
+            })
             .into()
     }
 
@@ -360,28 +380,6 @@ impl Project {
                 }
                 Task::none()
             }
-            Message::ShellInputChange(input) => {
-                state.shell = input;
-                Task::none()
-            }
-            Message::ShellInputSubmit => {
-                let cmd_text = state.shell.clone();
-                if cmd_text.trim().is_empty() { return Task::none(); }
-
-                state.shell_output.push(format!("$ {}", cmd_text));
-                state.shell.clear();
-
-                let parts: Vec<&str> = cmd_text.split_whitespace().collect();
-                if parts.first() == Some(&"cd") {
-                    return Task::none();
-                }
-
-                Task::perform(async move { run_system_command(&cmd_text).await }, Message::ShellResult)
-            }
-            Message::ShellResult(output) => {
-                state.shell_output.push(output);
-                Task::none()
-            }
             Message::StartResizingSidebar => {
                 state.is_resizing_sidebar = true;
                 Task::none()
@@ -420,20 +418,47 @@ impl Project {
 
                 Task::none()
             }
+            Message::TerminalEvent(iced_term::Event::BackendCall(_, cmd)) => {
+                match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
+                    iced_term::actions::Action::Shutdown => {
+                        println!("Terminal closed!");
+                    },
+                    _ => {}
+                }
+                Task::none()
+            }
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(|event, _status, _id| {
-            if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-                if modifiers.command() {
-                    match key {
-                        keyboard::Key::Character(c) if c == "s" || c == "S" => Some(Message::Save),
-                        _ => None,
+        Subscription::batch(vec![
+            event::listen_with(|event, _status, _id| {
+                match event {
+
+                    Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                        if modifiers.command() {
+                            match key {
+                                keyboard::Key::Character(c) if c.as_ref() == "s" || c.as_ref() == "S" => Some(Message::Save),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
                     }
-                } else { None }
-            } else { None }
-        })
+
+                    Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                        Some(Message::CursorMoved(position))
+                    }
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                        Some(Message::StopResizing)
+                    }
+
+                    _ => None
+                }
+            }),
+
+            self.terminal.subscription().map(Message::TerminalEvent),
+        ])
     }
 
     fn init() -> (Self, Task<Message>) {
@@ -565,5 +590,6 @@ fn main() -> iced::Result {
             min_size: Some((800.0, 600.0).into()),
             ..Default::default()
         })
+
         .run()
 }
