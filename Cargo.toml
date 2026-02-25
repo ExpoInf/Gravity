@@ -15,6 +15,7 @@ iced_term = "0.7.0"
 [package.metadata.bundle]
 name = "Gravity Editor"
 icon = ["appicon.icns"]
+identifier = "com.exi.gravity"
 version = "1.0.0"
 category = "Productivity"
 long_description = """

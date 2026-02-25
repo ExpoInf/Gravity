@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::collections::HashMap;
 
 struct Project {
     state: text_editor::Content,
@@ -26,6 +27,7 @@ struct Project {
     is_resizing_terminal: bool,
     last_cursor_pos: Option<iced::Point>,
     terminal: iced_term::Terminal,
+    background_tabs: HashMap<PathBuf, text_editor::Content>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,9 +115,11 @@ fn build_root_node(root_path: &str) -> Option<FileNode> {
 
 impl Default for Project {
     fn default() -> Self {
-        let default_str = fs::read_to_string("path.txt")
-        .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| {
+        let default_str = directories::UserDirs::new()
+            .map(|user_dirs| user_dirs.home_dir().join(".config").join("gravity").join("path.txt"))
+            .and_then(|path_file| fs::read_to_string(path_file).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| {
                 env::current_dir()
                     .unwrap_or_else(|_| PathBuf::from("."))
                     .to_string_lossy()
@@ -153,6 +157,7 @@ impl Default for Project {
             is_resizing_terminal: false,
             last_cursor_pos: None,
             terminal: iced_term::Terminal::new(0, term_settings).expect("Failed to init terminal"),
+            background_tabs: HashMap::new(),
         }
     }
 }
@@ -176,7 +181,7 @@ impl Project {
                 selection: Color::from_rgb8(60, 100, 200),
             });
 
-        let tabs = container(create_file_tabs(state.open_files.clone()))
+        let tabs = container(create_file_tabs(state.open_files.clone(), &state.save_path))
             .height(50)
             .width(Length::Fill)
             .center_y(50)
@@ -325,6 +330,7 @@ impl Project {
             Message::OpenPicker => {
                 Task::perform(
                     async {
+                        // 1. MUST use AsyncFileDialog to safely bypass macOS thread restrictions
                         rfd::AsyncFileDialog::new()
                             .set_title("Open Project Folder")
                             .pick_folder()
@@ -336,7 +342,16 @@ impl Project {
             }
             Message::PickerResult(Some(path)) => {
                 let path_str = path.to_string_lossy().to_string();
-                fs::write("path.txt", path.to_string_lossy().to_string()).unwrap();
+
+                // 2. Save "path.txt" to your ~/.config/gravity folder instead of the read-only root
+                if let Some(user_dirs) = directories::UserDirs::new() {
+                    let config_dir = user_dirs.home_dir().join(".config").join("gravity");
+
+                    // Ensure the folder exists, then write safely without .unwrap()
+                    let _ = fs::create_dir_all(&config_dir);
+                    let _ = fs::write(config_dir.join("path.txt"), &path_str);
+                }
+
                 state.browsing_path = path_str.clone();
                 state.file_tree = build_root_node(&path_str);
                 Task::none()
@@ -363,21 +378,33 @@ impl Project {
                 }
                 Task::none()
             }
-            Message::OpenFile(path) => {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    state.state = text_editor::Content::with_text(&content);
-                    state.save_path = path.display().to_string();
+            Message::OpenFile(path) | Message::OpenTab(path) => {
+                let current_path = PathBuf::from(&state.save_path);
+
+                if current_path == path {
+                    return Task::none();
                 }
-                if tab_scan(state.open_files.clone(), path.clone()) {
+
+                if !state.save_path.is_empty() {
+                    let mut parked_content = text_editor::Content::new();
+                    std::mem::swap(&mut state.state, &mut parked_content);
+                    state.background_tabs.insert(current_path, parked_content);
+                }
+
+                if let Some(mut existing_content) = state.background_tabs.remove(&path) {
+                    std::mem::swap(&mut state.state, &mut existing_content);
+                    state.save_path = path.display().to_string();
+                } else {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        state.state = text_editor::Content::with_text(&content);
+                        state.save_path = path.display().to_string();
+                    }
+                }
+
+                if !state.open_files.contains(&path) {
                     state.open_files.push(path);
                 }
-                Task::none()
-            }
-            Message::OpenTab(path) => {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    state.state = text_editor::Content::with_text(&content);
-                    state.save_path = path.display().to_string();
-                }
+
                 Task::none()
             }
             Message::StartResizingSidebar => {
@@ -414,6 +441,16 @@ impl Project {
             Message::CloseTab(path) => {
                 if let Some(index) = state.open_files.iter().position(|r| *r == path) {
                     state.open_files.remove(index);
+                }
+                state.background_tabs.remove(&path);
+
+                if state.save_path == path.display().to_string() {
+                    if let Some(next_tab) = state.open_files.last().cloned() {
+                        return Task::perform(async move { next_tab }, Message::OpenTab);
+                    } else {
+                        state.state = text_editor::Content::new();
+                        state.save_path = String::new();
+                    }
                 }
 
                 Task::none()
@@ -533,34 +570,56 @@ async fn run_system_command(command: &str) -> String {
     }
 }
 
-fn create_file_tabs(file_tabs: Vec<PathBuf>) -> Element<'static, Message> {
+fn create_file_tabs(file_tabs: Vec<PathBuf>, current_path: &str) -> Element<'static, Message> {
     let tabs_row = file_tabs.into_iter().fold(row![].spacing(10), |tabs, path| {
+
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+
+        let is_active = path.display().to_string() == current_path;
+
+        let bg_color = if is_active {
+            Color::from_rgb8(60, 60, 60)
+        } else {
+            Color::from_rgb8(35, 35, 35)
+        };
+
+        let boarder_color = if is_active {
+            Color::from_rgb8(70, 70, 70)
+        } else {
+            Color::from_rgb8(35, 35, 35)
+        };
+
         tabs.push(
-            container (
-                row! {
-                button(text(format ! ("{}", path.display())))
-                .on_press(Message::OpenTab(path.clone()))
-                .style( | _theme, _status | button::Style {
-                background: Some(Background::Color(Color::from_rgb8(35, 35, 35))),
-                text_color: Color::WHITE,
-                border: Border { radius: 8.0.into(), ..Default::default() },
-                ..Default::default()
-                }),
-                button(text("✕"))
-                .on_press(Message::CloseTab(path))
-                .style( | _theme, _status | button::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
-                text_color: Color::from_rgb8(120, 120, 120),
-                border: Border { radius: 8.0.into(), ..Default::default() },
-                ..Default::default()
+            container(
+                row![
+                    button(text(file_name))
+                        .on_press(Message::OpenTab(path.clone()))
+                        .style(move |_theme, _status| button::Style {
+                            background: Some(Background::Color(bg_color)),
+                            text_color: Color::WHITE,
+                            border: Border { radius: 8.0.into(),  ..Default::default() },
+                            ..Default::default()
+                        }),
+                    button(text("✕"))
+                        .on_press(Message::CloseTab(path.clone()))
+                        .style(|_theme, _status| button::Style {
+                            background: Some(Background::Color(Color::TRANSPARENT)),
+                            text_color: Color::from_rgb8(120, 120, 120),
+                            border: Border { radius: 8.0.into(), ..Default::default() },
+                            ..Default::default()
+                        })
+                ]
+            )
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(bg_color)),
+                    text_color: Some(Color::WHITE),
+                    border: Border { radius: 8.0.into(), color: boarder_color, width: 2.0,  ..Default::default() },
+                    ..Default::default()
                 })
-                }
-            ).style( | _theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(35, 35, 35))),
-                text_color: Some(Color::WHITE),
-                border: Border { radius: 8.0.into(), ..Default::default() },
-                ..Default::default()
-            })
         )
     });
 
@@ -572,24 +631,17 @@ fn create_file_tabs(file_tabs: Vec<PathBuf>) -> Element<'static, Message> {
 }
 
 
-fn tab_scan(file_tabs: Vec<PathBuf>, path: PathBuf) -> bool {
-    if file_tabs.contains(&path) {
-        false
-    } else {
-        true
-    }
-}
 
 fn main() -> iced::Result {
     let icon = load_icon("final_icon.png");
     iced::application(Project::init, Project::update, Project::view)
         .title(|_state: &Project| String::from("Gravity Editor"))
+        .theme(|_state: &Project| Theme::Dark)
         .subscription(Project::subscription)
         .window(window::Settings {
             icon,
             min_size: Some((800.0, 600.0).into()),
             ..Default::default()
         })
-
         .run()
 }
