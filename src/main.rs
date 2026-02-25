@@ -330,7 +330,6 @@ impl Project {
             Message::OpenPicker => {
                 Task::perform(
                     async {
-                        // 1. MUST use AsyncFileDialog to safely bypass macOS thread restrictions
                         rfd::AsyncFileDialog::new()
                             .set_title("Open Project Folder")
                             .pick_folder()
@@ -343,11 +342,9 @@ impl Project {
             Message::PickerResult(Some(path)) => {
                 let path_str = path.to_string_lossy().to_string();
 
-                // 2. Save "path.txt" to your ~/.config/gravity folder instead of the read-only root
                 if let Some(user_dirs) = directories::UserDirs::new() {
                     let config_dir = user_dirs.home_dir().join(".config").join("gravity");
 
-                    // Ensure the folder exists, then write safely without .unwrap()
                     let _ = fs::create_dir_all(&config_dir);
                     let _ = fs::write(config_dir.join("path.txt"), &path_str);
                 }
@@ -617,7 +614,7 @@ fn create_file_tabs(file_tabs: Vec<PathBuf>, current_path: &str) -> Element<'sta
                 .style(move |_theme| container::Style {
                     background: Some(Background::Color(bg_color)),
                     text_color: Some(Color::WHITE),
-                    border: Border { radius: 8.0.into(), color: boarder_color, width: 2.0,  ..Default::default() },
+                    border: Border { radius: 8.0.into(), color: boarder_color, width: 3.5,  ..Default::default() },
                     ..Default::default()
                 })
         )
