@@ -2,7 +2,7 @@ mod config_lib;
 
 use crate::config_lib::{load_config, AppConfig};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Space};
+use iced::widget::{Id, button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Container, Space};
 use iced::{ event, keyboard, window, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
 use iced::mouse;
 use iced::event::Event;
@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 use std::collections::HashMap;
+use iced::font::{Family, Font, Weight, Stretch, Style};
+use iced::widget::operation::focus;
 
 struct Project {
     state: text_editor::Content,
@@ -28,7 +30,18 @@ struct Project {
     last_cursor_pos: Option<iced::Point>,
     terminal: iced_term::Terminal,
     background_tabs: HashMap<PathBuf, text_editor::Content>,
+    dynamic_width: f32,
+    editor_id: Id,
+    terminal_focused: bool,
 }
+
+#[derive(Debug, Clone)]
+enum SidebarStates {
+    ProjectDir,
+    GitManager,
+}
+
+
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -48,6 +61,11 @@ enum Message {
     CursorMoved(iced::Point),
     CloseTab(PathBuf),
     TerminalEvent(iced_term::Event),
+    DynamicIslandIncrease,
+    SidebarStateChange(SidebarStates),
+    FocusEditor,
+    FocusTerminal,
+    TerminalViewEvent(iced_term::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +81,20 @@ struct FileNode {
 static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(|| {
     load_config().expect("Could not read settings")
 });
+
+const NERD_FONT: Font = Font {
+    family: Family::Name("JetBrainsMono Nerd Font"),
+    weight: Weight::Normal,
+    stretch: Stretch::Normal,
+    style: Style::Normal,
+};
+
+const INTER: Font = Font {
+    family: Family::Name("Inter"),
+    weight: Weight::Normal,
+    stretch: Stretch::Normal,
+    style: Style::Normal,
+};
 
 impl FileNode {
     fn new(path: PathBuf, is_dir: bool) -> Self {
@@ -158,6 +190,9 @@ impl Default for Project {
             last_cursor_pos: None,
             terminal: iced_term::Terminal::new(0, term_settings).expect("Failed to init terminal"),
             background_tabs: HashMap::new(),
+            dynamic_width: 10.0,
+            editor_id: Id::unique(),
+            terminal_focused: false,
         }
     }
 }
@@ -170,6 +205,7 @@ impl Project {
             container(text("No folder open"))
         };
         let editor = text_editor(&state.state)
+            .id(state.editor_id.clone())
             .placeholder("Start typing...")
             .on_action(Message::Edit)
             .height(Length::Fill)
@@ -180,6 +216,9 @@ impl Project {
                 value: Color::WHITE,
                 selection: Color::from_rgb8(60, 100, 200),
             });
+
+        let editor_container = mouse_area(editor)
+            .on_press(Message::FocusEditor);
 
         let tabs = container(create_file_tabs(state.open_files.clone(), &state.save_path))
             .height(50)
@@ -217,6 +256,19 @@ impl Project {
 
 
 
+        let sidebar_buttons = column!(
+            button(text("G"))
+            .on_press(Message::SidebarStateChange(SidebarStates::GitManager))
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .style(|_theme, _status| button::Style {
+                         background: Some(Background::Color(Color::from_rgb8(60, 60, 60))),
+                         text_color: Color::WHITE,
+                         border: Border { radius: 5.5.into(), ..Default::default() },
+                         ..Default::default()
+                    })
+        );
+
         let sidebar_content = column![
             text("Current File:"),
             text_input("path/to/file.txt", &state.save_path)
@@ -249,7 +301,7 @@ impl Project {
             },
             ..Default::default()
         }),
-                button(text("📂"))
+                button(text(" "))
                     .on_press(Message::OpenPicker)
                     .padding(10)
                     .style(|_theme, _status| button::Style {
@@ -274,9 +326,9 @@ impl Project {
                 ..Default::default()
             });
 
-        let terminal_panel = container(
+        let terminal_panel = mouse_area(container(
             iced_term::TerminalView::show(&state.terminal)
-                .map(Message::TerminalEvent)
+                .map(Message::TerminalViewEvent)
         )
             .padding(5)
             .height(Length::Fixed(state.terminal_height))
@@ -285,25 +337,29 @@ impl Project {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 border: Border { color: Color::TRANSPARENT, width: 2.0, radius: 8.0.into()},
                 ..Default::default()
-            });
+            })).on_press(Message::FocusTerminal);
 
+        let dynamic_container = container(text("dih")).width(Length::Fixed(state.dynamic_width));
+        let top = row![tabs, dynamic_container];
 
         let main_content = column![
-    tabs,
+            top,
             Space::new().height(10.0),
-    editor,
-    terminal_divider,
-    terminal_panel
-].spacing(0);
+            editor_container,
+            terminal_divider,
+            terminal_panel
+        ].spacing(0);
 
         container(row![
-    sidebar,
-    sidebar_divider,
-    main_content
-])
+            sidebar_buttons,
+            Space::new().width(5.0),
+            sidebar,
+            sidebar_divider,
+            main_content
+        ])
             .height(Length::Fill)
             .width(Length::Fill)
-            .padding(10)
+            .padding(5)
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(50, 48, 51))),
                 text_color: Some(Color::WHITE),
@@ -454,10 +510,43 @@ impl Project {
             }
             Message::TerminalEvent(iced_term::Event::BackendCall(_, cmd)) => {
                 match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
-                    iced_term::actions::Action::Shutdown => {
-                        println!("Terminal closed!");
-                    },
+                    iced_term::actions::Action::Shutdown => println!("Terminal closed!"),
                     _ => {}
+                }
+                Task::none()
+            }
+            Message::DynamicIslandIncrease => {
+                for i in 0..50 {
+                    state.dynamic_width = state.dynamic_width + 1.0;
+                }
+
+                Task::none()
+            }
+            Message::SidebarStateChange(sidebar_state) => {
+                Task::none()
+            }
+            Message::FocusTerminal => {
+                state.terminal_focused = true;
+                // Force the text editor to lose focus by giving it a brand new ID
+                state.editor_id = Id::unique();
+                Task::none()
+            }
+            Message::FocusEditor => {
+                state.terminal_focused = false;
+                focus(state.editor_id.clone())
+            }
+            Message::TerminalViewEvent(event) => {
+                // GATEKEEPER: Only pass keyboard/mouse input to the terminal if it is focused
+                if state.terminal_focused {
+                    if let iced_term::Event::BackendCall(_, cmd) = event {
+                        // Proxy the command down into the Alacritty backend
+                        match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
+                            iced_term::actions::Action::Shutdown => {
+                                println!("Terminal closed!");
+                            },
+                            _ => {}
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -473,12 +562,15 @@ impl Project {
                         if modifiers.command() {
                             match key {
                                 keyboard::Key::Character(c) if c.as_ref() == "s" || c.as_ref() == "S" => Some(Message::Save),
+                                keyboard::Key::Character(c) if c.as_ref() == "t" || c.as_ref() == "T" => Some(Message::DynamicIslandIncrease),
                                 _ => None,
                             }
                         } else {
                             None
                         }
                     }
+
+
 
                     Event::Mouse(mouse::Event::CursorMoved { position }) => {
                         Some(Message::CursorMoved(position))
@@ -500,13 +592,28 @@ impl Project {
     }
 
     fn view_file_tree(node: &FileNode) -> Element<'_, Message> {
-        let icon = if node.is_dir {
-            if node.is_expanded { "▼ 📂 " } else { "▶ 📁 " }
+        let icon_str = if node.is_dir {
+            "\u{f07b}" //  Folder icon
         } else {
-            "  📄 "
+            "\u{f15b}" //  File icon
         };
 
-        let content = button(text(format!("{}{}", icon, node.name)))
+        let icon = text(icon_str)
+            .font(NERD_FONT)
+            .size(16); // You can make the icon slightly larger if needed
+
+        // 3. Create the text widget (this will use your app's default font, like Inter)
+        let label = text(node.name.clone())
+            .size(14);
+
+        // 4. Combine them inside a row! and pass that row into the button
+        let content = button(
+            row![
+        icon,
+        label
+    ]
+                .spacing(8)
+        )
             .on_press(if node.is_dir {
                 Message::ToggleFolder(node.path.clone())
             } else {
@@ -558,15 +665,6 @@ fn toggle_and_scan(node: &mut FileNode, target_path: &PathBuf) {
     }
 }
 
-async fn run_system_command(command: &str) -> String {
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() { return String::new(); }
-    match Command::new(parts[0]).args(&parts[1..]).output() {
-        Ok(out) => format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
-        Err(e) => format!("Error: {}", e),
-    }
-}
-
 fn create_file_tabs(file_tabs: Vec<PathBuf>, current_path: &str) -> Element<'static, Message> {
     let tabs_row = file_tabs.into_iter().fold(row![].spacing(10), |tabs, path| {
 
@@ -593,7 +691,7 @@ fn create_file_tabs(file_tabs: Vec<PathBuf>, current_path: &str) -> Element<'sta
         tabs.push(
             container(
                 row![
-                    button(text(file_name))
+                    button(text(file_name).font(INTER))
                         .on_press(Message::OpenTab(path.clone()))
                         .style(move |_theme, _status| button::Style {
                             background: Some(Background::Color(bg_color)),
@@ -601,7 +699,8 @@ fn create_file_tabs(file_tabs: Vec<PathBuf>, current_path: &str) -> Element<'sta
                             border: Border { radius: 8.0.into(),  ..Default::default() },
                             ..Default::default()
                         }),
-                    button(text("✕"))
+                    button(text("").font(NERD_FONT))
+
                         .on_press(Message::CloseTab(path.clone()))
                         .style(|_theme, _status| button::Style {
                             background: Some(Background::Color(Color::TRANSPARENT)),
@@ -635,6 +734,8 @@ fn main() -> iced::Result {
         .title(|_state: &Project| String::from("Gravity Editor"))
         .theme(|_state: &Project| Theme::Dark)
         .subscription(Project::subscription)
+        .font(include_bytes!("/Users/exi/RustroverProjects/Gravity/fonts/JetBrainsMonoNerdFont-Regular.ttf"))
+        .default_font(NERD_FONT)
         .window(window::Settings {
             icon,
             min_size: Some((800.0, 600.0).into()),
