@@ -1,5 +1,6 @@
 mod config_lib;
 
+use iced::alignment;
 use crate::config_lib::{load_config, AppConfig};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Id, button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Container, Space};
@@ -90,7 +91,7 @@ const NERD_FONT: Font = Font {
 };
 
 const INTER: Font = Font {
-    family: Family::Name("Inter"),
+    family: Family::Name("Inter 24pt, Medium"),
     weight: Weight::Normal,
     stretch: Stretch::Normal,
     style: Style::Normal,
@@ -255,12 +256,27 @@ impl Project {
 
 
 
+        let icon = text("\u{f07b}")
+            .font(NERD_FONT)
+            .size(14)
+            .line_height(text::LineHeight::Relative(1.0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center);
 
         let sidebar_buttons = column!(
-            button(text("G"))
+            button(icon)
             .on_press(Message::SidebarStateChange(SidebarStates::GitManager))
             .width(Length::Fixed(30.0))
             .height(Length::Fixed(30.0))
+            .padding(Padding{
+                top: 0.0,
+                left: 0.0,
+                right: 4.0,
+                bottom: 0.0,
+
+            })
             .style(|_theme, _status| button::Style {
                          background: Some(Background::Color(Color::from_rgb8(60, 60, 60))),
                          text_color: Color::WHITE,
@@ -270,7 +286,7 @@ impl Project {
         );
 
         let sidebar_content = column![
-            text("Current File:"),
+            text("Current File:").font(INTER),
             text_input("path/to/file.txt", &state.save_path)
                 .on_input(Message::PathChanged)
                 .padding(10)
@@ -282,10 +298,10 @@ impl Project {
                     placeholder: Color::from_rgb8(120, 120, 120),
                     selection: Color::from_rgb8(60, 100, 200),
                 }),
-            text("Browse Directory:"),
+            text("Browse Directory:").font(INTER),
 
             row!
-            [container(scrollable(text(&state.browsing_path).size(15))
+            [container(scrollable(text(&state.browsing_path).size(15).font(INTER))
             .direction(Direction::Horizontal(
                 Scrollbar::new().width(0).scroller_width(0)
             ))
@@ -301,9 +317,25 @@ impl Project {
             },
             ..Default::default()
         }),
-                button(text(" "))
+
+
+                button(text("\u{f07b}")
+            .font(NERD_FONT)
+            .size(14)
+            .line_height(text::LineHeight::Relative(1.0))
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            )
+                .width(Length::Fixed(35.0))
+                .height(Length::Fixed(35.0))
                     .on_press(Message::OpenPicker)
-                    .padding(10)
+                    .padding(Padding{
+                    top: 0.0,
+                    left: 0.0,
+                    right: 4.0,
+                    bottom: 0.0,
+
+            })
                     .style(|_theme, _status| button::Style {
                          background: Some(Background::Color(Color::from_rgb8(50, 50, 50))),
                          text_color: Color::WHITE,
@@ -339,11 +371,11 @@ impl Project {
                 ..Default::default()
             })).on_press(Message::FocusTerminal);
 
-        let dynamic_container = container(text("dih")).width(Length::Fixed(state.dynamic_width));
-        let top = row![tabs, dynamic_container];
+
+        //let top = row![tabs, dynamic_container];
 
         let main_content = column![
-            top,
+            tabs,
             Space::new().height(10.0),
             editor_container,
             terminal_divider,
@@ -527,7 +559,6 @@ impl Project {
             }
             Message::FocusTerminal => {
                 state.terminal_focused = true;
-                // Force the text editor to lose focus by giving it a brand new ID
                 state.editor_id = Id::unique();
                 Task::none()
             }
@@ -536,10 +567,8 @@ impl Project {
                 focus(state.editor_id.clone())
             }
             Message::TerminalViewEvent(event) => {
-                // GATEKEEPER: Only pass keyboard/mouse input to the terminal if it is focused
                 if state.terminal_focused {
                     if let iced_term::Event::BackendCall(_, cmd) = event {
-                        // Proxy the command down into the Alacritty backend
                         match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
                             iced_term::actions::Action::Shutdown => {
                                 println!("Terminal closed!");
@@ -593,20 +622,22 @@ impl Project {
 
     fn view_file_tree(node: &FileNode) -> Element<'_, Message> {
         let icon_str = if node.is_dir {
-            "\u{f07b}" //  Folder icon
+            if node.is_expanded {
+                "\u{f07c}"
+            } else {
+                "\u{f07b}"
+            }
         } else {
-            "\u{f15b}" //  File icon
+            "\u{f15b}"
         };
 
         let icon = text(icon_str)
             .font(NERD_FONT)
-            .size(16); // You can make the icon slightly larger if needed
+            .size(16);
 
-        // 3. Create the text widget (this will use your app's default font, like Inter)
-        let label = text(node.name.clone())
+        let label = text(node.name.clone()).font(INTER)
             .size(14);
 
-        // 4. Combine them inside a row! and pass that row into the button
         let content = button(
             row![
         icon,
@@ -734,7 +765,7 @@ fn main() -> iced::Result {
         .title(|_state: &Project| String::from("Gravity Editor"))
         .theme(|_state: &Project| Theme::Dark)
         .subscription(Project::subscription)
-        .font(include_bytes!("/Users/exi/RustroverProjects/Gravity/fonts/JetBrainsMonoNerdFont-Regular.ttf"))
+        .font(include_bytes!("/home/exi/Gravity/fonts/JetBrainsMonoNerdFont-Regular.ttf"))
         .default_font(NERD_FONT)
         .window(window::Settings {
             icon,
