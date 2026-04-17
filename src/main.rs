@@ -3,7 +3,7 @@ mod config_lib;
 use iced::alignment;
 use crate::config_lib::{load_config, AppConfig};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{Id, button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Container, Space};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, Space};
 use iced::{ event, keyboard, window, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
 use iced::mouse;
 use iced::event::Event;
@@ -16,7 +16,6 @@ use std::process::Command;
 use std::sync::LazyLock;
 use std::collections::HashMap;
 use iced::font::{Family, Font, Weight, Stretch, Style};
-use iced::widget::operation::focus;
 
 struct Project {
     state: text_editor::Content,
@@ -32,8 +31,6 @@ struct Project {
     terminal: iced_term::Terminal,
     background_tabs: HashMap<PathBuf, text_editor::Content>,
     dynamic_width: f32,
-    editor_id: Id,
-    terminal_focused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -41,8 +38,6 @@ enum SidebarStates {
     ProjectDir,
     GitManager,
 }
-
-
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -64,8 +59,6 @@ enum Message {
     TerminalEvent(iced_term::Event),
     DynamicIslandIncrease,
     SidebarStateChange(SidebarStates),
-    FocusEditor,
-    FocusTerminal,
     TerminalViewEvent(iced_term::Event),
 }
 
@@ -192,8 +185,6 @@ impl Default for Project {
             terminal: iced_term::Terminal::new(0, term_settings).expect("Failed to init terminal"),
             background_tabs: HashMap::new(),
             dynamic_width: 10.0,
-            editor_id: Id::unique(),
-            terminal_focused: false,
         }
     }
 }
@@ -206,7 +197,6 @@ impl Project {
             container(text("No folder open"))
         };
         let editor = text_editor(&state.state)
-            .id(state.editor_id.clone())
             .placeholder("Start typing...")
             .on_action(Message::Edit)
             .height(Length::Fill)
@@ -217,9 +207,6 @@ impl Project {
                 value: Color::WHITE,
                 selection: Color::from_rgb8(60, 100, 200),
             });
-
-        let editor_container = mouse_area(editor)
-            .on_press(Message::FocusEditor);
 
         let tabs = container(create_file_tabs(state.open_files.clone(), &state.save_path))
             .height(50)
@@ -358,7 +345,7 @@ impl Project {
                 ..Default::default()
             });
 
-        let terminal_panel = mouse_area(container(
+        let terminal_panel = container(
             iced_term::TerminalView::show(&state.terminal)
                 .map(Message::TerminalViewEvent)
         )
@@ -369,7 +356,7 @@ impl Project {
                 background: Some(Background::Color(Color::from_rgb8(30, 30, 30))),
                 border: Border { color: Color::TRANSPARENT, width: 2.0, radius: 8.0.into()},
                 ..Default::default()
-            })).on_press(Message::FocusTerminal);
+            });
 
 
         //let top = row![tabs, dynamic_container];
@@ -377,7 +364,7 @@ impl Project {
         let main_content = column![
             tabs,
             Space::new().height(10.0),
-            editor_container,
+            editor,
             terminal_divider,
             terminal_panel
         ].spacing(0);
@@ -557,24 +544,13 @@ impl Project {
             Message::SidebarStateChange(sidebar_state) => {
                 Task::none()
             }
-            Message::FocusTerminal => {
-                state.terminal_focused = true;
-                state.editor_id = Id::unique();
-                Task::none()
-            }
-            Message::FocusEditor => {
-                state.terminal_focused = false;
-                focus(state.editor_id.clone())
-            }
             Message::TerminalViewEvent(event) => {
-                if state.terminal_focused {
-                    if let iced_term::Event::BackendCall(_, cmd) = event {
-                        match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
-                            iced_term::actions::Action::Shutdown => {
-                                println!("Terminal closed!");
-                            },
-                            _ => {}
-                        }
+                if let iced_term::Event::BackendCall(_, cmd) = event {
+                    match state.terminal.handle(iced_term::Command::ProxyToBackend(cmd)) {
+                        iced_term::actions::Action::Shutdown => {
+                            println!("Terminal closed!");
+                        },
+                        _ => {}
                     }
                 }
                 Task::none()

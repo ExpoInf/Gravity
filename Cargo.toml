@@ -10,7 +10,7 @@ serde_json = "1.0.149"
 image = "0.24"
 directories = "5.0"
 rfd = "0.15"
-iced_term = "0.7.0"
+iced_term = "0.8.0"
 
 [package.metadata.bundle]
 name = "Gravity Editor"
