@@ -1,6 +1,10 @@
 [package]
 name = "Gravity"
+<<<<<<< HEAD
 version = "0.0.4"
+=======
+version = "0.0.5"
+>>>>>>> bbe1711 (Security fixes)
 edition = "2024"
 
 [dependencies]
