@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-still technically just a text editor.
-=======
 # Gravity Editor
 
 > A modern, fast text editor built with Rust and Iced, featuring an integrated terminal, intuitive file browser, and powerful customization.
@@ -292,4 +289,3 @@ For issues, feature requests, or questions:
 ---
 
 Made with ❤️ in Rust
->>>>>>> bbe1711 (Security fixes)

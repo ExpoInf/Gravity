@@ -1,8 +1,5 @@
 mod config_lib;
-<<<<<<< HEAD
-=======
 mod security;
->>>>>>> bbe1711 (Security fixes)
 
 use iced::alignment;
 use crate::config_lib::{load_config, AppConfig};
@@ -13,15 +10,8 @@ use iced::mouse;
 use iced::event::Event;
 use image::GenericImageView;
 use std::env;
-<<<<<<< HEAD
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-=======
 use std::fs;
 use std::path::{Path, PathBuf};
->>>>>>> bbe1711 (Security fixes)
 use std::sync::LazyLock;
 use std::collections::HashMap;
 use iced::font::{Family, Font, Weight, Stretch, Style};
@@ -117,8 +107,6 @@ impl FileNode {
 }
 
 fn read_dir_shallow(root: &Path) -> Vec<FileNode> {
-<<<<<<< HEAD
-=======
     // Get sandbox (home directory)
     let sandbox = match security::get_sandbox_root() {
         Ok(dirs) => dirs,
@@ -134,20 +122,15 @@ fn read_dir_shallow(root: &Path) -> Vec<FileNode> {
         return Vec::new();
     }
 
->>>>>>> bbe1711 (Security fixes)
     let mut nodes = Vec::new();
     if let Ok(entries) = fs::read_dir(root) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-<<<<<<< HEAD
-            nodes.push(FileNode::new(path.clone(), path.is_dir()));
-=======
 
             // Double-check each entry is in sandbox
             if security::is_in_sandbox(&path, &sandbox) {
                 nodes.push(FileNode::new(path.clone(), path.is_dir()));
             }
->>>>>>> bbe1711 (Security fixes)
         }
     }
     nodes.sort_by(|a, b| match (a.is_dir, b.is_dir) {
@@ -429,9 +412,6 @@ impl Project {
                 Task::none()
             }
             Message::PathChanged(new_path) => {
-<<<<<<< HEAD
-                state.save_path = new_path;
-=======
                 // Validate the path input for safety
                 if new_path.trim().is_empty() {
                     state.save_path = new_path;
@@ -446,7 +426,6 @@ impl Project {
                         }
                     }
                 }
->>>>>>> bbe1711 (Security fixes)
                 Task::none()
             }
             Message::BrowsePathChanged(new_path) => {
@@ -485,13 +464,6 @@ impl Project {
             Message::Save => {
                 let file_path = &state.save_path;
                 if !file_path.trim().is_empty() {
-<<<<<<< HEAD
-                    if Path::new(&file_path).exists() {
-                        let _ = fs::write(file_path, state.state.text());
-                    } else {
-                        if let Ok(mut file) = File::create(&file_path) {
-                            let _ = file.write_all(state.state.text().as_ref());
-=======
                     // Get sandbox root (home directory)
                     match security::get_sandbox_root() {
                         Ok(sandbox) => {
@@ -510,7 +482,6 @@ impl Project {
                         }
                         Err(e) => {
                             eprintln!("✗ Cannot determine home directory: {}", e);
->>>>>>> bbe1711 (Security fixes)
                         }
                     }
                 }
@@ -530,8 +501,6 @@ impl Project {
                     return Task::none();
                 }
 
-<<<<<<< HEAD
-=======
                 // Validate sandbox access
                 if let Ok(sandbox) = security::get_sandbox_root() {
                     if !security::is_in_sandbox(&path, &sandbox) {
@@ -540,7 +509,6 @@ impl Project {
                     }
                 }
 
->>>>>>> bbe1711 (Security fixes)
                 if !state.save_path.is_empty() {
                     let mut parked_content = text_editor::Content::new();
                     std::mem::swap(&mut state.state, &mut parked_content);
@@ -551,11 +519,6 @@ impl Project {
                     std::mem::swap(&mut state.state, &mut existing_content);
                     state.save_path = path.display().to_string();
                 } else {
-<<<<<<< HEAD
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        state.state = text_editor::Content::with_text(&content);
-                        state.save_path = path.display().to_string();
-=======
                     // Safe file read with size limit
                     match security::read_file_safe(&path, security::MAX_FILE_SIZE) {
                         Ok(content) => {
@@ -572,7 +535,6 @@ impl Project {
                         Err(e) => {
                             eprintln!("✗ Failed to open file: {}", e);
                         }
->>>>>>> bbe1711 (Security fixes)
                     }
                 }
 
@@ -844,11 +806,7 @@ fn main() -> iced::Result {
         .title(|_state: &Project| String::from("Gravity Editor"))
         .theme(|_state: &Project| Theme::Dark)
         .subscription(Project::subscription)
-<<<<<<< HEAD
-        .font(include_bytes!("/home/exi/Gravity/fonts/JetBrainsMonoNerdFont-Regular.ttf"))
-=======
         .font(include_bytes!("../fonts/JetBrainsMonoNerdFont-Regular.ttf"))
->>>>>>> bbe1711 (Security fixes)
         .default_font(NERD_FONT)
         .window(window::Settings {
             icon,
