@@ -1,2 +1,24 @@
 /target
 /path.txt
+/path.txt
+# IntelliJ IDEA / CLion
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.code-workspace
+launch.json
+*.swp
+*.swo
+*~
+# CMake
+CMakeFiles/
+CMakeCache.txt              
+cmake_install.cmake
+Makefile
+CTestTestfile.
+Cargo.lock
+
+.DS_Store
+
