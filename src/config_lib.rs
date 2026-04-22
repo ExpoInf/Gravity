@@ -40,14 +40,25 @@ impl Default for AppConfig {
 fn get_config_path() -> Result<PathBuf, Box<dyn Error>> {
     if let Some(user_dirs) = UserDirs::new() {
         let home_dir = user_dirs.home_dir();
-        
+
         let config_dir = home_dir.join(".config").join("gravity");
-        
+
         if !config_dir.exists() {
             fs::create_dir_all(&config_dir)?;
+            // Set secure permissions on new directory (0o700)
+            #[cfg(unix)]
+            crate::security::set_secure_permissions(&config_dir)?;
         }
 
-        return Ok(config_dir.join("settings.json"));
+        let config_file = config_dir.join("settings.json");
+
+        // Ensure config file has secure permissions
+        #[cfg(unix)]
+        if config_file.exists() {
+            crate::security::set_secure_permissions(&config_file)?;
+        }
+
+        return Ok(config_file);
     }
 
     Err("Could not determine home directory".into())
@@ -67,9 +78,9 @@ pub fn load_config() -> Result<AppConfig, Box<dyn Error>> {
     let settings: AppConfig = match serde_json::from_str(&json_content) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Config error: {}. Resetting.", e);
+            eprintln!("✗ Config parse error: {}. Using defaults.", e);
             let default = AppConfig::default();
-            save_config(&default)?;
+            let _ = save_config(&default);
             default
         }
     };
@@ -80,6 +91,12 @@ pub fn load_config() -> Result<AppConfig, Box<dyn Error>> {
 pub fn save_config(settings: &AppConfig) -> Result<(), Box<dyn Error>> {
     let file_path = get_config_path()?;
     let json_string = serde_json::to_string_pretty(settings)?;
-    fs::write(file_path, json_string)?;
+
+    fs::write(&file_path, json_string)?;
+
+    // Set secure permissions after writing
+    #[cfg(unix)]
+    crate::security::set_secure_permissions(&file_path)?;
+
     Ok(())
 }
